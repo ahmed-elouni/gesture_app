@@ -73,9 +73,10 @@ class MainActivity : ComponentActivity(), SensorEventListener {
     private var startX = 0f
     private var startY = 0f
     private var gestureStartWallMs = 0L
-    private lateinit var csvFile: File
+    lateinit var csvFile: File
 
     var gestureData by mutableStateOf("Waiting for gesture...")
+
 
     data class AccelSample(val x: Float, val y: Float, val z: Float, val timestampNs: Long)
 
@@ -105,44 +106,34 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         setContent {
             Motion_2Theme {
                 val navController = rememberNavController()
-                NavHost(navController, startDestination = "login") {
-                    composable("login") { LoginPage(navController) }
-                    composable("home") { HomePage(navController) } // ✅ New Home Page
-                    composable("devices") { DevicesPage(navController) }
-                    composable("wifi") { WifiSettingsPage(navController) }
-                    composable("gesture") { GesturePage() }
-                    // Device details screen (pass deviceName)
-                    composable("deviceDetails/{deviceName}") { backStackEntry ->
-                        val deviceName = backStackEntry.arguments?.getString("deviceName") ?: "Unknown"
-                        DeviceDetailsPage(navController, deviceName)
+                // Wrap all screens with a touch collector
+                Box(modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                    detectTapGestures(
+                        onPress = { /* Called when the gesture starts */ },
+                        onTap = { /* Called on tap */ },
+                        onDoubleTap = { /* Called on Double Tap */ },
+                        onLongPress = { /* Called on Long Press */ }
+                    )
+                }) {
+                    NavHost(navController, startDestination = "login") {
+                        composable("login") { LoginPage(navController) }
+                        composable("home") { HomePage(navController) }
+                        composable("devices") { DevicesPage(navController) }
+                        composable("wifi") { WifiSettingsPage(navController) }
+                        composable("gesture") { GesturePage() }
+                        // Device details screen (pass deviceName)
+                        composable("deviceDetails/{deviceName}") { backStackEntry ->
+                            val deviceName = backStackEntry.arguments?.getString("deviceName") ?: "Unknown"
+                            DeviceDetailsPage(navController, deviceName)
+                        }
                     }
                 }
             }
         }
     }
 
-    // --- Sensor callbacks ---
-    override fun onSensorChanged(event: SensorEvent?) {
-        event ?: return
-        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
-            val sample = AccelSample(event.values[0], event.values[1], event.values[2], event.timestamp)
-            historyBuffer.add(sample)
-            val cutoff = event.timestamp - HISTORY_WINDOW_NS
-            while (historyBuffer.isNotEmpty() && historyBuffer.first.timestampNs < cutoff) {
-                historyBuffer.removeFirst()
-            }
-            if (collecting) {
-                accelX.add(sample.x)
-                accelY.add(sample.y)
-                accelZ.add(sample.z)
-            }
-        }
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-
-    // --- Global touch detection ---
-    override fun onTouchEvent(event: MotionEvent): Boolean {
+    // --- Override dispatchTouchEvent to capture all touch events in the activity ---
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 accelX.clear()
@@ -207,8 +198,28 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 """.trimIndent()
             }
         }
-        return super.onTouchEvent(event)
+        return super.dispatchTouchEvent(event)
     }
+
+    // --- Sensor callbacks ---
+    override fun onSensorChanged(event: SensorEvent?) {
+        event ?: return
+        if (event.sensor.type == Sensor.TYPE_ACCELEROMETER) {
+            val sample = AccelSample(event.values[0], event.values[1], event.values[2], event.timestamp)
+            historyBuffer.add(sample)
+            val cutoff = event.timestamp - HISTORY_WINDOW_NS
+            while (historyBuffer.isNotEmpty() && historyBuffer.first.timestampNs < cutoff) {
+                historyBuffer.removeFirst()
+            }
+            if (collecting) {
+                accelX.add(sample.x)
+                accelY.add(sample.y)
+                accelZ.add(sample.z)
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     // --- Compose Pages ---
     @Composable
@@ -229,46 +240,6 @@ class MainActivity : ComponentActivity(), SensorEventListener {
             Text(gestureData, style = MaterialTheme.typography.bodyLarge)
         }
     }
-/*
-//@OptIn(ExperimentalMaterial3Api::class)
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun GesturePage() {
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Gesture Demo") },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    titleContentColor = Color.White
-                )
-            )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-                .padding(16.dp)
-        ) {
-            Text(
-                text = "Touches are recorded globally",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Medium
-            )
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Text(
-                text = gestureData,
-                //style = MaterialTheme.typography.bodyLarge,
-                //lineHeight = 22.sp
-            )
-        }
-    }
-}
-
-*/
 
     @Composable
     fun LoginPage(navController: NavHostController) {
@@ -575,253 +546,259 @@ fun GesturePage() {
                     text = "Go to Gesture Demo",
                     style = MaterialTheme.typography.bodyLarge.copy(
                         fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        color = Color.White,
                     )
                 )
             }
         }
     }
+    private fun saveGestureToCSV(
+        timestamp: Long,
+        x: Float, y: Float, dx: Float, dy: Float,
+        surface: Float, distance: Double, speed: Double,
+        angle: Double, duration: Double, category: String,
+        beforeX: Float, beforeY: Float, beforeZ: Float,
+        duringX: Float, duringY: Float, duringZ: Float
+    ) {
+        val line = "$timestamp,$x,$y,$dx,$dy,$surface," +
+                "${"%.2f".format(distance)}," +
+                "${"%.2f".format(speed)}," +
+                "${"%.2f".format(angle)}," +
+                "${"%.3f".format(duration)}," +
+                "$category," +
+                "${"%.2f".format(beforeX)}," +
+                "${"%.2f".format(beforeY)}," +
+                "${"%.2f".format(beforeZ)}," +
+                "${"%.2f".format(duringX)}," +
+                "${"%.2f".format(duringY)}," +
+                "${"%.2f".format(duringZ)}\n"
+        csvFile.appendText(line)
+    }
+}
 
-    @Composable
-    fun DeviceDetailsPage(navController: NavHostController, deviceName: String) {
-        var deviceStatus by remember { mutableStateOf(true) } // ON by default
+@Composable
+fun DeviceDetailsPage(navController: NavHostController, deviceName: String) {
+    var deviceStatus by remember { mutableStateOf(true) } // ON by default
 
-        Box(
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xFFF5F5F5)),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
             modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xFFF5F5F5)),
-            contentAlignment = Alignment.TopCenter
+                .fillMaxWidth()
+                .padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Column(
+            Spacer(Modifier.height(24.dp))
+
+            // Device title
+            Text(
+                text = deviceName,
+                style = MaterialTheme.typography.headlineMedium.copy(
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            // Device status toggle
+            Row(
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (deviceStatus) "Status: ON" else "Status: OFF",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Switch(
+                    checked = deviceStatus,
+                    onCheckedChange = { deviceStatus = it }
+                )
+            }
+
+            Spacer(Modifier.height(32.dp))
+
+            // Control buttons
+            Button(
+                onClick = { /* Restart logic */ },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .padding(vertical = 8.dp),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Spacer(Modifier.height(24.dp))
+                Text("Restart Device")
+            }
 
-                // Device title
-                Text(
-                    text = deviceName,
-                    style = MaterialTheme.typography.headlineMedium.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                )
+            Button(
+                onClick = { /* Configure logic */ },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Configure Device")
+            }
 
-                Spacer(Modifier.height(24.dp))
+            Button(
+                onClick = { /* Delete logic */ },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Delete Device", color = Color.White)
+            }
 
-                // Device status toggle
-                Row(
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (deviceStatus) "Status: ON" else "Status: OFF",
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier.padding(end = 8.dp)
-                    )
-                    Switch(
-                        checked = deviceStatus,
-                        onCheckedChange = { deviceStatus = it }
-                    )
-                }
+            Spacer(Modifier.height(32.dp))
 
-                Spacer(Modifier.height(32.dp))
-
-                // Control buttons
-                Button(
-                    onClick = { /* Restart logic */ },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Restart Device")
-                }
-
-                Button(
-                    onClick = { /* Configure logic */ },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Configure Device")
-                }
-
-                Button(
-                    onClick = { /* Delete logic */ },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color.Red),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Delete Device", color = Color.White)
-                }
-
-                Spacer(Modifier.height(32.dp))
-
-                // Back button
-                OutlinedButton(
-                    onClick = { navController.popBackStack() },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Text("Back to Devices")
-                }
+            // Back button
+            OutlinedButton(
+                onClick = { navController.popBackStack() },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Back to Devices")
             }
         }
     }
+}
 
 
-    @OptIn(ExperimentalMaterial3Api::class)
-    @Composable
-    fun WifiSettingsPage(navController: NavHostController) {
-        val networks = listOf("WiFi-Home", "WiFi-Office", "WiFi-Cafe")
-        var selectedNetwork by remember { mutableStateOf<String?>(null) }
-        var showPasswordDialog by remember { mutableStateOf(false) }
-        var password by remember { mutableStateOf("") }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WifiSettingsPage(navController: NavHostController) {
+    val networks = listOf("WiFi-Home", "WiFi-Office", "WiFi-Cafe")
+    var selectedNetwork by remember { mutableStateOf<String?>(null) }
+    var showPasswordDialog by remember { mutableStateOf(false) }
+    var password by remember { mutableStateOf("") }
 
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Wi-Fi Settings") },
-                    navigationIcon = {
-                        IconButton(onClick = { navController.navigate("home") }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
-                        }
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Wi-Fi Settings") },
+                navigationIcon = {
+                    IconButton(onClick = { navController.navigate("home") }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                )
-            }
-        ) { paddingValues ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                }
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Default.Home,
+                contentDescription = "WiFi Icon",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(64.dp)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                "Available Networks",
+                style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Icon(
-                    imageVector = Icons.Default.Home,
-                    contentDescription = "WiFi Icon",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(64.dp)
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    "Available Networks",
-                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                LazyColumn(
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    items(networks) { network ->
-                        Card(
+                items(networks) { network ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 8.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        elevation = CardDefaults.cardElevation(6.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor =
+                                if (selectedNetwork == network) MaterialTheme.colorScheme.primaryContainer
+                                else MaterialTheme.colorScheme.surface
+                        )
+                    ) {
+                        Row(
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 8.dp),
-                            shape = RoundedCornerShape(16.dp),
-                            elevation = CardDefaults.cardElevation(6.dp),
-                            colors = CardDefaults.cardColors(
-                                containerColor =
-                                    if (selectedNetwork == network) MaterialTheme.colorScheme.primaryContainer
-                                    else MaterialTheme.colorScheme.surface
-                            )
+                                .padding(16.dp)
+                                .fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Row(
-                                modifier = Modifier
-                                    .padding(16.dp)
-                                    .fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        imageVector = Icons.Default.Home,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                    Spacer(modifier = Modifier.width(12.dp))
-                                    Text(network, style = MaterialTheme.typography.bodyLarge)
-                                }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.Home,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(network, style = MaterialTheme.typography.bodyLarge)
+                            }
 
-                                Button(
-                                    onClick = {
-                                        selectedNetwork = network
-                                        showPasswordDialog = true
-                                    },
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text("Connect")
-                                }
+                            Button(
+                                onClick = {
+                                    selectedNetwork = network
+                                    showPasswordDialog = true
+                                },
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Connect")
                             }
                         }
                     }
                 }
             }
         }
+    }
 
-        // 🔑 Password Dialog
-        if (showPasswordDialog && selectedNetwork != null) {
-            AlertDialog(
-                onDismissRequest = { showPasswordDialog = false },
-                title = { Text("Connect to ${selectedNetwork}") },
-                text = {
-                    Column {
-                        Text("Enter Wi-Fi Password")
-                        Spacer(modifier = Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = password,
-                            onValueChange = { password = it },
-                            label = { Text("Password") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            singleLine = true
-                        )
-                    }
-                },
-                confirmButton = {
-                    Button(onClick = {
-                        // Simulate connection
-                        showPasswordDialog = false
-                        password = ""
-                        // Here you could trigger actual Wi-Fi connection logic
-                    }) {
-                        Text("Connect")
-                    }
-                },
-                dismissButton = {
-                    OutlinedButton(onClick = { showPasswordDialog = false }) {
-                        Text("Cancel")
-                    }
+    // 🔑 Password Dialog
+    if (showPasswordDialog && selectedNetwork != null) {
+        AlertDialog(
+            onDismissRequest = { showPasswordDialog = false },
+            title = { Text("Connect to ${selectedNetwork}") },
+            text = {
+                Column {
+                    Text("Enter Wi-Fi Password")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text("Password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true
+                    )
                 }
-            )
-        }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    // Simulate connection
+                    showPasswordDialog = false
+                    password = ""
+                    // Here you could trigger actual Wi-Fi connection logic
+                }) {
+                    Text("Connect")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { showPasswordDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
+}
 
-/*
-    // --- Gesture classification & CSV ---
-    private fun classifyGesture(distance: Double, speed: Double, angle: Double, duration: Double, pointerCount: Int): String {
-        if (pointerCount > 1) return "Multi-touch"
-        if (distance < 10) return when {
-            duration < 0.3 -> "Tap"
-            duration > 0.5 -> "Long Press"
-            else -> "Double Tap"
-        }
-        if (distance > 50) {
-            if (duration < 0.5) return "Swipe"
-            if (duration >= 0.5 && speed < 800) return "Drag"
-        }
-        if (duration > 0.5 && distance > 50) return if (abs(angle) < 45 || abs(angle) > 135) "Scroll" else "Pan"
-        return "Complexe"
-    }
-*/
 // --- Gesture classification & CSV ---
 private fun classifyGesture(
     distance: Double,
@@ -879,27 +856,3 @@ private fun classifyGesture(
     }
 }
 
-    private fun saveGestureToCSV(
-        timestamp: Long,
-        x: Float, y: Float, dx: Float, dy: Float,
-        surface: Float, distance: Double, speed: Double,
-        angle: Double, duration: Double, category: String,
-        beforeX: Float, beforeY: Float, beforeZ: Float,
-        duringX: Float, duringY: Float, duringZ: Float
-    ) {
-        val line = "$timestamp,$x,$y,$dx,$dy,$surface," +
-                "${"%.2f".format(distance)}," +
-                "${"%.2f".format(speed)}," +
-                "${"%.2f".format(angle)}," +
-                "${"%.3f".format(duration)}," +
-                "$category," +
-                "${"%.2f".format(beforeX)}," +
-                "${"%.2f".format(beforeY)}," +
-                "${"%.2f".format(beforeZ)}," +
-                "${"%.2f".format(duringX)}," +
-                "${"%.2f".format(duringY)}," +
-                "${"%.2f".format(duringZ)}\n"
-
-        csvFile.appendText(line)
-    }
-}
