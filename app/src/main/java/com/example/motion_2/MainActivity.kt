@@ -88,7 +88,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
         val timestamp = System.currentTimeMillis()
         csvFile = File(
             Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            "gesture_$timestamp.csv"
+            "CSVS/gesture_$timestamp.csv"
         )
         if (!csvFile.exists()) {
             val header = "Timestamp,StartX,StartY,Dx,Dy,Surface,Distance,Speed,Angle,Duration,Category," +
@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 )
 
                 gestureData = """
-                    Catégorie: $category
+                    Category: $category
                     
                     StartX: $startX
                     
@@ -195,6 +195,11 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                     Surface: ${"%.2f".format(surface)}
                     
                     Duration: ${"%.3f".format(durationSec)}
+                    
+                    Acceleration X: ${"%.3f".format(duringX)}
+                    
+                    Acceleration Y: ${"%.3f".format(duringY)}
+
                 """.trimIndent()
             }
         }
@@ -236,8 +241,12 @@ class MainActivity : ComponentActivity(), SensorEventListener {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth()
             )
-            Spacer(Modifier.height(16.dp))
-            Text(gestureData, style = MaterialTheme.typography.bodyLarge)
+            Spacer(Modifier.height(20.dp))
+
+            Text("Try Multiple Gesture: Tap,Double Tap, Drag,Swipe L/R ... ,", style = MaterialTheme.typography.bodyLarge , color = Color.Black, fontWeight = FontWeight.Bold )
+
+            Spacer(Modifier.height(40.dp))
+            Text(gestureData, style = MaterialTheme.typography.bodyLarge , color = Color.Black ,fontWeight = FontWeight.Bold)
         }
     }
 
